@@ -1,0 +1,31 @@
+image: mcr.microsoft.com/dotnet/sdk:6.0
+variables:
+  VersionPrefix: "1.0.0"
+  VersionSuffix: "2"
+  
+default:
+  tags: [ dind, docker ]
+
+stages:
+    - build
+    - test
+    - publish
+    
+build:
+  stage: build
+  script:
+    - dotnet build ./src/RabbitMqClient/RabbitMqClient.csproj
+    
+test:
+  stage: test
+  script:
+    - dotnet test ./src/RabbitMqClient.UnitTests/RabbitMqClient.UnitTests.csproj
+
+publish:
+  stage: publish
+  script:
+    - dotnet pack ./src/RabbitMqClient/RabbitMqClient.csproj -c Release
+    - dotnet nuget add source "${CI_API_V4_URL}/projects/159/packages/nuget/index.json" --name gitlab --username gitlab-ci-token --password $CI_JOB_TOKEN --store-password-in-clear-text
+    - dotnet nuget push "src/RabbitMqClient/bin/Release/*.nupkg" --source gitlab
+  only:
+    - master
