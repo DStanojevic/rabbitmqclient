@@ -3,7 +3,6 @@ using System.Collections.Generic;
 using System.Text;
 using System.Text.Json;
 using System.Threading;
-using System.Threading.Channels;
 using System.Threading.Tasks;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
@@ -14,13 +13,13 @@ namespace RabbitMqClient;
 
 public interface IMessageQueueSubscriber
 {
-    void Start(SubscriptionInfo subscriptionInfo);
+    void Start(SubscriptionInfo subscriptionInfo, CancellationToken cancellationToken);
     void Stop();
     string ClientName { get; set; }
     SubscriptionInfo Subscription { get; }
 }
 
-public class MessageQueueSubscriber<TMessageHandler, TMessage, THandledException> : IMessageQueueSubscriber, IDisposable 
+public class MessageQueueSubscriber<TMessageHandler, TMessage, THandledException> : IMessageQueueSubscriber, IDisposable
     where TMessageHandler : IMessageHandler<TMessage> where THandledException : Exception
 {
     private SubscriptionInfo _subscription;
@@ -28,8 +27,8 @@ public class MessageQueueSubscriber<TMessageHandler, TMessage, THandledException
     private readonly IConsumerFactory _consumerFactory;
     private IConnection? _connection;
     private IModel? _channel;
-    private readonly CancellationTokenSource _cancellationTokenSource;
     private readonly ILogger _logger;
+    private CancellationTokenSource? _cancellationTokenSource;
 
     public MessageQueueSubscriber(IConnectionFactory connectionFactory, IConsumerFactory consumerFactory, ILogger logger, string clientName)
     {
@@ -37,10 +36,11 @@ public class MessageQueueSubscriber<TMessageHandler, TMessage, THandledException
         _consumerFactory = consumerFactory;
         ClientName = clientName;
         _logger = logger;
-        _cancellationTokenSource = new CancellationTokenSource();
     }
 
     public SubscriptionInfo Subscription => _subscription;
+
+    protected ILogger Logger => _logger;
 
     private TMessage DeserializeMessageBody(ReadOnlySpan<byte> messageBytes)
     {
@@ -52,11 +52,12 @@ public class MessageQueueSubscriber<TMessageHandler, TMessage, THandledException
         return objectResult;
     }
 
-    public void Start(SubscriptionInfo subscriptionInfo)
+    public void Start(SubscriptionInfo subscriptionInfo, CancellationToken cancellationToken)
     {
         using (_logger.BeginScope(
                    $"RabbitMQ subscriber client starting listening.Exchange: {_subscription.Topic.TopicName}, queue: {_subscription.SubscriptionName}."))
         {
+            _cancellationTokenSource = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
             if (_channel != null && _channel.IsOpen)
                 throw new InvalidOperationException("Subscription channelWrapper is already opened.");
             _subscription = subscriptionInfo;
@@ -103,8 +104,8 @@ public class MessageQueueSubscriber<TMessageHandler, TMessage, THandledException
         using (_logger.BeginScope(
                    $"Stopping RabbitMQ subscriber client. Exchange: {_subscription.Topic.TopicName}, queue: {_subscription.SubscriptionName}."))
         {
-            _cancellationTokenSource.Cancel();
-            _cancellationTokenSource.Dispose();
+            _cancellationTokenSource?.Cancel();
+            _cancellationTokenSource?.Dispose();
             _channel?.Close();
             _connection?.Close();
             _logger.LogInformation(
@@ -118,26 +119,47 @@ public class MessageQueueSubscriber<TMessageHandler, TMessage, THandledException
         set => _connectionFactory.ClientProvidedName = value;
     }
 
-    private Task<IProcessingOutcome> OnMessageReceived(IServiceProvider serviceProvider, BasicDeliverEventArgs eventArgs, CancellationToken cancellationToken)
+    internal async Task<IProcessingOutcome> HandleMessage(
+        IServiceProvider serviceProvider, 
+        string exchange, 
+        string messageId, 
+        string routingKey, 
+        IDictionary<string, object> headers, 
+        TMessage message, 
+        CancellationToken cancellationToken
+        )
     {
-        using (_logger.BeginScope(
-                   $"Handle message. Topic: {eventArgs.Exchange}. Subscription {Subscription.SubscriptionName}. MessageId tag {eventArgs.BasicProperties.MessageId}. Routing key: {eventArgs.RoutingKey}"))
+        using (_logger.BeginScope($"Handle message. Topic: {exchange}. Subscription {Subscription.SubscriptionName}. MessageId tag {messageId}. Routing key: {routingKey}"))
         {
-            var messageBody = DeserializeMessageBody(eventArgs.Body.Span);
-            var messageHandler = serviceProvider.GetService<TMessageHandler>() ??
-                                 throw new NotSupportedException($"Message handler of type '{typeof(TMessageHandler)}' not supported.");
-            return messageHandler.HandleMessage(this, eventArgs.BasicProperties.Headers, messageBody, cancellationToken);
+            var messageHandler = CreateMessageHandler(serviceProvider);
+            return await messageHandler.HandleMessage(this, headers, message, cancellationToken);
         }
     }
 
-    public virtual void OnRetry(BasicDeliverEventArgs deliverEventArgs, Exception ex, int attempt)
+    protected virtual void OnRetry(BasicDeliverEventArgs deliverEventArgs, Exception ex, int attempt)
     {
         //no default implementation
+    }
+    protected virtual TMessageHandler CreateMessageHandler(IServiceProvider serviceProvider) =>
+        serviceProvider.GetService<TMessageHandler>() ?? throw new NotSupportedException($"Message handler of type '{typeof(TMessageHandler)}' not supported.");
+
+    private async Task<IProcessingOutcome> OnMessageReceived(IServiceProvider serviceProvider, BasicDeliverEventArgs eventArgs, CancellationToken cancellationToken)
+    {
+            var messageBody = DeserializeMessageBody(eventArgs.Body.Span);
+        return await HandleMessage(
+            serviceProvider, 
+            eventArgs.Exchange, 
+            eventArgs.BasicProperties.MessageId, 
+            eventArgs.RoutingKey, 
+            eventArgs.BasicProperties.Headers, 
+            messageBody, 
+            cancellationToken
+            );
     }
 
     private static void RegisterDeadLetterExchange(IModel channel, string exchangeName)
     {
-        var queueTypeArguments = new Dictionary<string, object> {{"x-queue-type", "quorum"}};
+        var queueTypeArguments = new Dictionary<string, object> { { "x-queue-type", "quorum" } };
         var queueName = $"{exchangeName}-DefaultQueue";
         channel.ExchangeDeclare(exchangeName, Globals.DeadLetterExchangeType, durable: true, autoDelete: false);
         _ = channel.QueueDeclare(queueName, durable: true, exclusive: false, autoDelete: false, queueTypeArguments);
@@ -148,9 +170,9 @@ public class MessageQueueSubscriber<TMessageHandler, TMessage, THandledException
     {
         if (disposing)
         {
-            _connection.Dispose();
-            _channel.Dispose();
-            _cancellationTokenSource.Dispose();
+            _connection?.Dispose();
+            _channel?.Dispose();
+            _cancellationTokenSource?.Dispose();
         }
     }
 

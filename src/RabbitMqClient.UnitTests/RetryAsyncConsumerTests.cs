@@ -108,13 +108,15 @@ public class RetryAsyncConsumerTests
         #endregion
 
         #region Act
-        consumer.HandleBasicDeliver(consumerTag: "test tag",
-                                    deliveryTag: deliveryTag,
-                                    redelivered: false,
-                                    exchange: subscriptionInfoMock.Topic.TopicName,
-                                    routingKey: string.Empty,
-                                    properties: null,
-                                    body: new ReadOnlyMemory<byte>());
+        await consumer.HandleBasicDeliver(
+            consumerTag: "test tag",
+            deliveryTag: deliveryTag,
+            redelivered: false,
+            exchange: subscriptionInfoMock.Topic.TopicName,
+            routingKey: string.Empty,
+            properties: null,
+            body: new ReadOnlyMemory<byte>()
+            );
         await Task.Delay(100);
         #endregion
 

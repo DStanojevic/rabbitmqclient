@@ -5,20 +5,10 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using RabbitMQ.Client;
 using RabbitMQ.Client.Events;
-using RabbitMqClient.Internal;
 
-namespace RabbitMqClient;
-
+namespace RabbitMqClient.Internal;
 
 
-public interface IConsumerFactory
-{
-    IRetryBasicConsumer<THandledException> CreateRetryOnExceptionConsumer<THandledException>(IModel channel,
-                                                                                             SubscriptionInfo subscriptionInfo,
-                                                                                             Func<IServiceProvider, BasicDeliverEventArgs, CancellationToken, Task<IProcessingOutcome>> messageHandler,
-                                                                                             Action<BasicDeliverEventArgs, Exception, int>? retryHandler,
-                                                                                             CancellationToken cancellationToken) where THandledException : Exception;
-}
 
 internal class ConsumerFactory : IConsumerFactory
 {
@@ -36,11 +26,11 @@ internal class ConsumerFactory : IConsumerFactory
                                                                                                     Func<IServiceProvider, BasicDeliverEventArgs, CancellationToken, Task<IProcessingOutcome>> messageHandler,
                                                                                                     Action<BasicDeliverEventArgs, Exception, int>? retryHandler,
                                                                                                     CancellationToken cancellationToken) where THandledException : Exception
-        => new RetryAsyncConsumer<THandledException>(channel, 
-                                                     _serviceScopeFactory, 
-                                                     subscriptionInfo, 
+        => new RetryAsyncConsumer<THandledException>(channel,
+                                                     _serviceScopeFactory,
+                                                     subscriptionInfo,
                                                      messageHandler,
                                                      retryHandler,
-                                                     _loggerFactory.CreateLogger<RetryAsyncConsumer<THandledException>>(), 
+                                                     _loggerFactory.CreateLogger<RetryAsyncConsumer<THandledException>>(),
                                                      cancellationToken);
 }

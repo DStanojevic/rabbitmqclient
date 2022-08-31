@@ -7,7 +7,6 @@ namespace SubscriberTestApp.Internal.Subscribers;
 
 public interface IRetryingMessageHandler : IMessageHandler<MqGenericMessage<RetryInfo>>
 {
-
 }
 
 public class RetryingMessageHandler : IRetryingMessageHandler
@@ -31,14 +30,10 @@ public class RetryingMessageHandler : IRetryingMessageHandler
         using (_logger.BeginScope(
                    $"Processing genericMessage with id {genericMessage.Attributes.MessageId}. Topic: {subscriber.Subscription.Topic.TopicName}, Subscription: {subscriber.Subscription.SubscriptionName}."))
         {
-            if (_messageRetries.TryGetValue(genericMessage.Attributes.MessageId, out var attempt))
-                attempt++;
-            else
-                attempt = 1;
 
-            _messageRetries[genericMessage.Attributes.MessageId] = attempt;
+            var attempt = _messageRetries.GetOrAdd(genericMessage.Attributes.MessageId, 0);
+            _messageRetries[genericMessage.Attributes.MessageId] = ++attempt;
 
-            
             if (genericMessage.Payload.RetryCount >= attempt)
                 throw new RetryException(attempt);
 
