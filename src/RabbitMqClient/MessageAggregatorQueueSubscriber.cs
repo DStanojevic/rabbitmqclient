@@ -35,6 +35,7 @@ namespace RabbitMqClient
         {
             var key = GropingKeyPredicate(message);
             var buffer = _aggregates.GetOrAdd(key, new AggregatingBuffer(key, _bufferTimeOutMilliseconds, _bufferLimitCountOfMessages, HandleBatchCallback, Logger, cancellationToken));
+            Logger.LogDebug($"Buffer with key {buffer.GroupingKey} is waiting.");
             return await buffer.Wait(message, cancellationToken);
         }
 
@@ -43,17 +44,33 @@ namespace RabbitMqClient
             var outcome = await HangleMessagesBatch(buffer.Messages, cancellationToken);
             if(_aggregates.TryRemove(buffer.GroupingKey, out var removedBuffer))
             {
+                Logger.LogDebug($"Removing buffer with key {removedBuffer.GroupingKey}");
                 removedBuffer.Dispose();
             }
             else
             {
-                throw new InvalidOperationException("unable to remove buffer");
+                Logger.LogError($"Failed to remove buffer with key {removedBuffer.GroupingKey}!");
+                throw new InvalidOperationException("Unable to remove buffer ");
             }
             return outcome;
         }
 
         protected override IMessageHandler<TMessage> CreateMessageHandler(IServiceProvider serviceProvider) =>
             new BufferedMessageHadler(HandleMessage);
+
+
+        protected override void Dispose(bool disposing)
+        {
+            foreach (var aggregate in _aggregates.Values)
+                aggregate.Dispose();
+
+            if (disposing)
+            {
+                _aggregates.Clear();
+            }
+
+            base.Dispose(disposing);
+        }
 
 
         private class AggregatingBuffer : IDisposable
@@ -100,10 +117,10 @@ namespace RabbitMqClient
                     {
                         _logger.LogDebug($"Buffer timeout exceeded.");
                     }
-                        
                 }
                 else
                 {
+                    _logger.LogDebug($"Count of messages exceeded in buffer.");
                     _cancellationTokenSource.Cancel();
                 }
                 return await GetOutcome(cancellationToken);
@@ -117,6 +134,11 @@ namespace RabbitMqClient
                 {
                     //TODO: create unit test to make sure that this will be invoked only once.
                     _processingOutcome  = await _aggreggateHandlerDelegate(this, cancellation);
+                    _logger.LogDebug($"Buffer group id: {GroupingKey}. New outcome: {_processingOutcome}. Disposed: {disposedValue}.");
+                }
+                else
+                {
+                    _logger.LogDebug($"Buffer group id: {GroupingKey}. Existing outcome: {_processingOutcome}. Disposed: {disposedValue}.");
                 }
                 return _processingOutcome;
             }

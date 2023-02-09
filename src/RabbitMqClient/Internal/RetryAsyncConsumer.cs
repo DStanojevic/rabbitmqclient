@@ -92,7 +92,8 @@ internal sealed class RetryAsyncConsumer<THandledException> : AsyncDefaultBasicC
         }
     }
 
-    private Task<PolicyResult<IProcessingOutcome>> HandleDeliver(IServiceProvider serviceProvider,
+    private Task<PolicyResult<IProcessingOutcome>> HandleDeliver(
+        IServiceProvider serviceProvider,
         BasicDeliverEventArgs deliverEventArgs,
         Context context,
         AsyncPolicy retryPolicy)

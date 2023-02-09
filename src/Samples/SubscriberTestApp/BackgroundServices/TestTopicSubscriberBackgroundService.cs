@@ -1,4 +1,5 @@
 ﻿using RabbitMQ.Client;
+using RabbitMQ.Client.Events;
 using RabbitMqClient;
 using RabbitMqClient.Configuration;
 using SubscriberTestApp.Internal.Subscribers;

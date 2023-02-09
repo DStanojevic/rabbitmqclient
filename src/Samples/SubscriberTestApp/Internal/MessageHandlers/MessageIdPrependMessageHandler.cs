@@ -1,5 +1,4 @@
 ﻿using RabbitMqClient;
-using RabbitMqClient.Internal;
 using SubscriberTestApp.Internal.Repositories;
 using TestAppCommon;
 
